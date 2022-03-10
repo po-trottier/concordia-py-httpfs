@@ -120,15 +120,21 @@ def __build_response(data, status):
         print("Invalid status given", status)
         sys.exit(1)
 
+    # TODO Use the request data to do an action and build a response
+    response = data
+    # TODO Determine the content-type from the file name
+    content_type = 'application/json;charset=utf-8'
+    # TODO Determine the content-disposition from the file (https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Disposition)
+    content_disposition = 'inline'
+
     dt = datetime.datetime.utcnow()
 
     content = f'HTTP/1.1 {status.value[0]} {status.value[1]}\r\n' \
-              f'Content-Type: application/json;charset=utf-8\r\n' \
+              f'Content-Type: {content_type}\r\n' \
+              f'Content-Disposition: {content_disposition}\r\n' \
               f'Content-Length: {len(data)}\r\n' \
               f'Date: {format_date_time(dt.timestamp())}\r\n\r\n'
-
-    # TODO Use the request data to do an action and build a response
-    content += data
+    content += response
 
     return content
 
