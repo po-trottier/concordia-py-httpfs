@@ -8,9 +8,10 @@ import argparse
 import datetime
 import os
 import pathlib
+import selectors
 import socket
 import sys
-import threading
+import types
 from enum import Enum
 from wsgiref.handlers import format_date_time
 
@@ -31,7 +32,11 @@ class HttpStatus(Enum):
 # Default server host
 __SERVER_HOST = 'localhost'
 # Socket buffer size
-__BUFFER_SIZE = 1
+__BUFFER_SIZE = 1024
+
+
+# Allow multi-connections
+selector = selectors.DefaultSelector()
 
 
 # Initialize the server on the sockets
@@ -47,75 +52,84 @@ def start_server(host, port, verbose = False):
         if verbose:
             print(f'[INIT] HTTP File System server is listening at http://{host}:{port}')
 
-        # Keep listening for connections
+        # Setup multi-connection
+        listener.setblocking(False)
+        selector.register(listener, selectors.EVENT_READ, data=None)
+
+        # Listen to connections
         while True:
-            (conn, address) = listener.accept()
-            threading.Thread(target=__receive_connection, args=(conn, address, verbose)).start()
+            events = selector.select(timeout=None)
+            for key, mask in events:
+                if key.data is None:
+                    __accept_connection(key.fileobj, verbose)
+                else:
+                    __service_connection(key, mask, verbose)
+
+    except KeyboardInterrupt:
+        print("Caught keyboard interrupt, exiting")
 
     finally:
         # Always close the socket
         listener.close()
+        selector.close()
+
+
+# Accept a client connection through the selector
+def __accept_connection(listener, verbose):
+    (conn, address) = listener.accept()
+
+    if verbose:
+        print("[CONNECTION] Accepted connection from", address)
+
+    conn.setblocking(False)
+    data = types.SimpleNamespace(addr=address, inb=b"", outb=b"")
+    events = selectors.EVENT_READ | selectors.EVENT_WRITE
+    selector.register(conn, events, data=data)
+
+
+# Accept a service connection (Read or Write data)
+def __service_connection(key, mask, verbose):
+    sock = key.fileobj
+    data = key.data
+
+    # Read the request from the client
+    if mask & selectors.EVENT_READ:
+        # Get the response data from the request
+        recv_data = __receive_connection(sock)
+        if recv_data:
+            data.outb += recv_data
+
+    # Send the response to the client
+    if mask & selectors.EVENT_WRITE:
+        if data.outb:
+            sent = sock.send(data.outb)
+            data.outb = data.outb[sent:]
+            if verbose and not data.outb:
+                print('[RESPONSE] Response sent to client')
+
+    # Close the connection if there is no more data to read or send back
+    if not data.outb:
+        selector.unregister(sock)
+        sock.close()
+        if verbose:
+            print("[CONNECTION] Closed connection to", data.addr)
+
 
 
 # Handler for client connections
-def __receive_connection(conn, address, verbose):
-    if verbose:
-        print('[CLIENT] New client connection from', address)
+def __receive_connection(sock):
+    # Receive the byte array
+    data = sock.recv(__BUFFER_SIZE)
 
-    try:
-        # Receive the byte array
-        data = __receive_data(conn)
-        # Build a proper HTTP response from the request
-        response = __build_response(data.decode(), HttpStatus.OK)
-        # Send the response back to the client
-        conn.sendall(response.encode(encoding='UTF-8'))
+    # Build a proper HTTP response from the request
+    response = __build_response(data.decode())
 
-    finally:
-        # If an error occurred, attempt to send an error response
-        try:
-            conn.sendall(__build_response('', HttpStatus.INTERNAL_SERVER_ERROR).encode(encoding='UTF-8'))
-        # Always close the connection
-        finally:
-            print('[ERROR] An unknown error occurred while handling the client request')
-            conn.close()
-
-    if verbose:
-        print('[RESPONSE] Response sent to client', response)
-
-
-# Receive the byte array from the client connection
-def __receive_data(conn):
-    # Read the socket data byte by byte until we reach the end of the headers
-    data = b''
-    while b'\r\n\r\n' not in data:
-        data += conn.recv(__BUFFER_SIZE)
-
-    # Get a string from the header bytes without the empty lines
-    header_data = data[:-4].decode()
-
-    # Ignore the HTTP Version and Request Status
-    header_strings = header_data.splitlines()[1:]
-
-    # Build a dictionary from the string
-    header_dictionary = {}
-    for string in header_strings:
-        header = string.split(': ')
-        header_dictionary[header[0]] = header[1]
-
-    # Create a dictionary from the headers
-    content_length = None
-    if 'Content-Length' in header_dictionary:
-        content_length = int(header_dictionary.get('Content-Length'))
-
-    # Receive the rest of the request
-    if content_length:
-        data += conn.recv(content_length)
-
-    return data
+    # Return the response back to the client
+    return response.encode(encoding='UTF-8')
 
 
 # Build a proper HTTP response
-def __build_response(data, status):
+def __build_response(data, status = HttpStatus.OK):
     if not isinstance(status, HttpStatus):
         print("Invalid status given", status)
         sys.exit(1)
@@ -126,10 +140,12 @@ def __build_response(data, status):
     content_type = 'application/json;charset=utf-8'
     # TODO Determine the content-disposition from the file (https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Disposition)
     content_disposition = 'inline'
+    # TODO Determine the proper response status
+    response_status = status
 
     dt = datetime.datetime.utcnow()
 
-    content = f'HTTP/1.1 {status.value[0]} {status.value[1]}\r\n' \
+    content = f'HTTP/1.1 {response_status.value[0]} {response_status.value[1]}\r\n' \
               f'Content-Type: {content_type}\r\n' \
               f'Content-Disposition: {content_disposition}\r\n' \
               f'Content-Length: {len(data)}\r\n' \
