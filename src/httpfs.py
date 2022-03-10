@@ -43,7 +43,7 @@ selector = selectors.DefaultSelector()
 
 
 # Initialize the server on the sockets
-def start_server(host, port, verbose = False):
+def start_server(host, port, path, verbose = False):
     # Open the socket
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -66,7 +66,7 @@ def start_server(host, port, verbose = False):
                 if key.data is None:
                     __accept_connection(key.fileobj, verbose)
                 else:
-                    __service_connection(key, mask, verbose)
+                    __service_connection(key, mask, path, verbose)
 
     finally:
         # Always close the socket
@@ -89,14 +89,14 @@ def __accept_connection(listener, verbose):
 
 
 # Accept a service connection (Read or Write data)
-def __service_connection(key, mask, verbose):
+def __service_connection(key, mask, path, verbose):
     sock = key.fileobj
     data = key.data
 
     # Read the request from the client
     if mask & selectors.EVENT_READ:
         # Get the response data from the request
-        recv_data = __receive_connection(sock)
+        recv_data = __receive_connection(sock, path)
         if recv_data:
             data.outb += recv_data
 
@@ -117,12 +117,12 @@ def __service_connection(key, mask, verbose):
 
 
 # Handler for client connections
-def __receive_connection(sock):
+def __receive_connection(sock, path):
     # Receive the byte array
     data = __receive_data(sock)
 
     # Build a proper HTTP response from the request
-    response = __build_response(data.decode())
+    response = __build_response(data.decode(), path)
 
     # Return the response back to the client
     return response.encode(encoding='UTF-8')
@@ -160,19 +160,15 @@ def __receive_data(sock):
 
 
 # Build a proper HTTP response
-def __build_response(data, status = HttpStatus.OK):
-    if not isinstance(status, HttpStatus):
-        print("Invalid status given", status)
-        sys.exit(1)
-
-    # TODO Use the request data to do an action and build a response
+def __build_response(data, path):
+    # TODO Use the request data to do an action and build a response => Use path
     response = data
     # TODO Determine the content-type from the file name
     content_type = 'application/json;charset=utf-8'
     # TODO Determine the content-disposition from the file (https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Disposition)
     content_disposition = 'inline'
     # TODO Determine the proper response status
-    response_status = status
+    response_status = HttpStatus.OK
 
     dt = datetime.datetime.utcnow()
 
@@ -212,4 +208,4 @@ if __name__ == "__main__":
     if flags.verbose:
         print(f"[ARGS] Arguments: {flags}")
 
-    start_server(__SERVER_HOST, flags.port, flags.verbose)
+    start_server(__SERVER_HOST, flags.port, flags.dir, flags.verbose)
