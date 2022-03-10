@@ -21,6 +21,7 @@ from wsgiref.handlers import format_date_time
 #############################################################################################
 
 
+# Subset of the valid HTTP Status Codes
 class HttpStatus(Enum):
     OK = (200, "OK")
     CREATED = (201, "Created")
@@ -67,9 +68,6 @@ def start_server(host, port, verbose = False):
                 else:
                     __service_connection(key, mask, verbose)
 
-    except KeyboardInterrupt:
-        print("Caught keyboard interrupt, exiting")
-
     finally:
         # Always close the socket
         listener.close()
@@ -83,6 +81,7 @@ def __accept_connection(listener, verbose):
     if verbose:
         print("[CONNECTION] Accepted connection from", address)
 
+    # Setup Service Connection
     conn.setblocking(False)
     data = types.SimpleNamespace(addr=address, inb=b"", outb=b"")
     events = selectors.EVENT_READ | selectors.EVENT_WRITE
