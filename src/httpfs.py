@@ -32,7 +32,9 @@ class HttpStatus(Enum):
 # Default server host
 __SERVER_HOST = 'localhost'
 # Socket buffer size
-__BUFFER_SIZE = 1024
+__BUFFER_SIZE = 1
+# Number of non-accepted connections queued
+__CONNECTION_QUEUE = 5
 
 
 # Allow multi-connections
@@ -47,7 +49,7 @@ def start_server(host, port, verbose = False):
     try:
         # Start the server
         listener.bind((host, port))
-        listener.listen(5)
+        listener.listen(__CONNECTION_QUEUE)
 
         if verbose:
             print(f'[INIT] HTTP File System server is listening at http://{host}:{port}')
@@ -108,24 +110,54 @@ def __service_connection(key, mask, verbose):
                 print('[RESPONSE] Response sent to client')
 
     # Close the connection if there is no more data to read or send back
-    if not data.outb:
+    if mask & selectors.EVENT_READ and not data.outb:
         selector.unregister(sock)
         sock.close()
         if verbose:
             print("[CONNECTION] Closed connection to", data.addr)
 
 
-
 # Handler for client connections
 def __receive_connection(sock):
     # Receive the byte array
-    data = sock.recv(__BUFFER_SIZE)
+    data = __receive_data(sock)
 
     # Build a proper HTTP response from the request
     response = __build_response(data.decode())
 
     # Return the response back to the client
     return response.encode(encoding='UTF-8')
+
+
+# Receive the byte array from the client connection
+def __receive_data(sock):
+    # Read the socket data byte by byte until we reach the end of the headers
+    data = b''
+    while b'\r\n\r\n' not in data:
+        data += sock.recv(__BUFFER_SIZE)
+
+    # Get a string from the header bytes without the empty lines
+    header_data = data[:-4].decode()
+
+    # Ignore the HTTP Version and Request Status
+    header_strings = header_data.splitlines()[1:]
+
+    # Build a dictionary from the string
+    header_dictionary = {}
+    for string in header_strings:
+        header = string.split(': ')
+        header_dictionary[header[0]] = header[1]
+
+    # Create a dictionary from the headers
+    content_length = None
+    if 'Content-Length' in header_dictionary:
+        content_length = int(header_dictionary.get('Content-Length'))
+
+    # Receive the rest of the request
+    if content_length:
+        data += sock.recv(content_length)
+
+    return data
 
 
 # Build a proper HTTP response
