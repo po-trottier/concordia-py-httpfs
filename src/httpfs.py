@@ -10,7 +10,6 @@ import os
 import pathlib
 import selectors
 import socket
-import sys
 import types
 from enum import Enum
 from wsgiref.handlers import format_date_time
