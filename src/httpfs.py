@@ -249,7 +249,13 @@ def __handle_request(request, path):
 
     # Write/Create a given file
     if request['verb'] == HttpVerb.POST.value:
-        return __write_file(full_path)
+        if not full_path.is_dir():
+            return __write_file(full_path, request['body'])
+        else:
+            response['response_body'] = json.dumps({
+                'error': 'The given path represents a directory. The path must represent a file to work correctly.'
+            })
+            return response
 
     return response
 
@@ -272,10 +278,11 @@ def __list_directory(path):
         response['response_status'] = HttpStatus.OK.value
 
     # If an exception occurs set the response status as Internal Server Error
-    except IOError:
+    except IOError as e:
         response['response_status'] = HttpStatus.INTERNAL_SERVER_ERROR.value
         response['response_body'] = json.dumps({
-            'error': 'An unknown error occurred while listing the directory contents.'
+            'error': 'An unknown error occurred while listing the directory contents.',
+            'details': str(e)
         })
 
     return response
@@ -288,8 +295,8 @@ def __read_file(path):
         'content_disposition': 'inline'
     }
 
-    if not path.exists() or not path.is_file():
-        response['response_status'] = HttpStatus.INTERNAL_SERVER_ERROR.value
+    if not path.exists():
+        response['response_status'] = HttpStatus.NOT_FOUND.value
         response['response_body'] = json.dumps({
             'error': 'The requested file was not found.'
         })
@@ -305,24 +312,48 @@ def __read_file(path):
             response['content_type'] = mime_type
             response['response_status'] = HttpStatus.OK.value
 
-    except IOError:
+    except IOError as e:
         response['content_disposition'] = 'inline'
         response['response_status'] = HttpStatus.INTERNAL_SERVER_ERROR.value
         response['response_body'] = json.dumps({
-            'error': 'An unknown error occurred while reading the file contents.'
+            'error': 'An unknown error occurred while reading the file contents.',
+            'details': str(e)
         })
         return response
 
     return response
 
 
-def __write_file(path):
-    return {
+def __write_file(path, content):
+    # Common response values
+    response = {
         'content_type': 'application/json;charset=utf-8',
-        'content_disposition': 'inline',
-        'response_status': HttpStatus.OK.value,
-        'response_body': 'file'
+        'content_disposition': 'inline'
     }
+
+    try:
+        # Determine if the file will be overwritten or created
+        created = not path.exists()
+        # Create all the parent directories required
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Start writing the file
+        with open(path, 'wb') as file:
+            file.write(content.encode())
+            response['response_status'] = HttpStatus.CREATED.value if created else HttpStatus.OK.value
+            response['response_body'] = json.dumps({
+                'success': f'The file was {"created" if created else "overwritten"}.'
+            })
+
+    except IOError as e:
+        response['content_disposition'] = 'inline'
+        response['response_status'] = HttpStatus.INTERNAL_SERVER_ERROR.value
+        response['response_body'] = json.dumps({
+            'error': 'An unknown error occurred while writing the file contents.',
+            'details': str(e)
+        })
+        return response
+
+    return response
 
 
 def __get_content_disposition(mime, path):
@@ -330,6 +361,7 @@ def __get_content_disposition(mime, path):
         return 'inline'
     else:
         return f'attachment; filename="{path.name}"'
+
 
 #############################################################################################
 # CLI Tool Implementation
