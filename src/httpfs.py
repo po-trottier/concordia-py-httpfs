@@ -7,6 +7,7 @@
 import argparse
 import datetime
 import json
+import mimetypes
 import os
 import pathlib
 import re
@@ -44,6 +45,17 @@ __SERVER_HOST = 'localhost'
 __BUFFER_SIZE = 1
 # Number of non-accepted connections queued
 __CONNECTION_QUEUE = 5
+# Mime types to return inline
+__INLINE_MIME_TYPES = [
+    'text/css',
+    'text/html',
+    'application/json',
+    'text/javascript',
+    'text/plain',
+    'application/xhtml+xml',
+    'application/xml',
+    'text/xml'
+]
 
 
 # Allow multi-connections
@@ -243,21 +255,65 @@ def __handle_request(request, path):
 
 
 def __list_directory(path):
-    return {
+    # Common response values
+    response = {
         'content_type': 'application/json;charset=utf-8',
-        'content_disposition': 'inline',
-        'response_status': HttpStatus.OK.value,
-        'response_body': 'directory'
+        'content_disposition': 'inline'
     }
+
+    try:
+        children = []
+        # For every child int the directory
+        for child in path.iterdir():
+            # Add an object with the name and type of the child
+            children.append({'name': child.name, 'is_directory': child.is_dir()})
+        # Add these values to the response
+        response['response_body'] = json.dumps(children)
+        response['response_status'] = HttpStatus.OK.value
+
+    # If an exception occurs set the response status as Internal Server Error
+    except IOError:
+        response['response_status'] = HttpStatus.INTERNAL_SERVER_ERROR.value
+        response['response_body'] = json.dumps({
+            'error': 'An unknown error occurred while listing the directory contents.'
+        })
+
+    return response
 
 
 def __read_file(path):
-    return {
+    # Common response values
+    response = {
         'content_type': 'application/json;charset=utf-8',
-        'content_disposition': 'inline',
-        'response_status': HttpStatus.OK.value,
-        'response_body': 'file'
+        'content_disposition': 'inline'
     }
+
+    if not path.exists() or not path.is_file():
+        response['response_status'] = HttpStatus.INTERNAL_SERVER_ERROR.value
+        response['response_body'] = json.dumps({
+            'error': 'The requested file was not found.'
+        })
+        return response
+
+    try:
+        mime_type = mimetypes.guess_type(path)[0]
+
+        with open(path, 'rb') as file:
+            file_content = file.read()
+            response['response_body'] = file_content.decode()
+            response['content_disposition'] = __get_content_disposition(mime_type, path)
+            response['content_type'] = mime_type
+            response['response_status'] = HttpStatus.OK.value
+
+    except IOError:
+        response['content_disposition'] = 'inline'
+        response['response_status'] = HttpStatus.INTERNAL_SERVER_ERROR.value
+        response['response_body'] = json.dumps({
+            'error': 'An unknown error occurred while reading the file contents.'
+        })
+        return response
+
+    return response
 
 
 def __write_file(path):
@@ -268,6 +324,12 @@ def __write_file(path):
         'response_body': 'file'
     }
 
+
+def __get_content_disposition(mime, path):
+    if mime in __INLINE_MIME_TYPES:
+        return 'inline'
+    else:
+        return f'attachment; filename="{path.name}"'
 
 #############################################################################################
 # CLI Tool Implementation
