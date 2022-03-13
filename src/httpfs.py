@@ -6,8 +6,10 @@
 
 import argparse
 import datetime
+import json
 import os
 import pathlib
+import re
 import selectors
 import socket
 import types
@@ -25,8 +27,15 @@ class HttpStatus(Enum):
     OK = (200, "OK")
     CREATED = (201, "Created")
     FORBIDDEN = (403, "Forbidden")
+    BAD_REQUEST = (400, "Bad Request")
     NOT_FOUND = (404, "Not Found")
     INTERNAL_SERVER_ERROR = (500, "Internal Server Error")
+
+
+# Subset of the valid HTTP Verbs
+class HttpVerb(Enum):
+    GET = "GET"
+    POST = "POST"
 
 
 # Default server host
@@ -52,6 +61,7 @@ def start_server(host, port, path, verbose = False):
         listener.listen(__CONNECTION_QUEUE)
 
         if verbose:
+            # noinspection HttpUrlsUsage
             print(f'[INIT] HTTP File System server is listening at http://{host}:{port}')
 
         # Setup multi-connection
@@ -63,6 +73,7 @@ def start_server(host, port, path, verbose = False):
             events = selector.select(timeout=None)
             for key, mask in events:
                 if key.data is None:
+                    # noinspection PyTypeChecker
                     __accept_connection(key.fileobj, verbose)
                 else:
                     __service_connection(key, mask, path, verbose)
@@ -121,7 +132,7 @@ def __receive_connection(sock, path):
     data = __receive_data(sock)
 
     # Build a proper HTTP response from the request
-    response = __build_response(data.decode(), path)
+    response = __build_response(data, path)
 
     # Return the response back to the client
     return response.encode(encoding='UTF-8')
@@ -160,25 +171,102 @@ def __receive_data(sock):
 
 # Build a proper HTTP response
 def __build_response(data, path):
-    # TODO Use the request data to do an action and build a response => Use path
-    response = data
-    # TODO Determine the content-type from the file name
-    content_type = 'application/json;charset=utf-8'
-    # TODO Determine the content-disposition from the file (https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Disposition)
-    content_disposition = 'inline'
-    # TODO Determine the proper response status
-    response_status = HttpStatus.OK
+    # Get a request dictionary from the raw request
+    request = __parse_request(data.decode())
+    # Handle the request appropriately
+    response = __handle_request(request, path)
 
     dt = datetime.datetime.utcnow()
 
-    content = f'HTTP/1.1 {response_status.value[0]} {response_status.value[1]}\r\n' \
-              f'Content-Type: {content_type}\r\n' \
-              f'Content-Disposition: {content_disposition}\r\n' \
-              f'Content-Length: {len(data)}\r\n' \
+    content = f'HTTP/1.1 {response["response_status"][0]} {response["response_status"][1]}\r\n' \
+              f'Content-Type: {response["content_type"]}\r\n' \
+              f'Content-Disposition: {response["content_disposition"]}\r\n' \
+              f'Content-Length: {len(response["response_body"])}\r\n' \
               f'Date: {format_date_time(dt.timestamp())}\r\n\r\n'
-    content += response
+    content += response["response_body"]
 
     return content
+
+
+def __parse_request(request):
+    lines = request.splitlines()
+    # Use REGEX to parse the request pattern
+    match = re.search('^([A-Z]+) (.+) HTTP/\d\.?\d?$', lines[0])
+    # Find the beginning of the body
+    body_start = lines.index('') + 1
+    # If the body exists get it
+    body = None
+    if body_start < len(lines):
+        body = '\r\n'.join(lines[body_start:])
+
+    return {
+        'verb': match.group(1),
+        'path': match.group(2),
+        'body': body,
+    }
+
+
+def __handle_request(request, path):
+    # Default Values
+    response = {
+        'content_type': 'application/json;charset=utf-8',
+        'content_disposition': 'inline',
+        'response_status': HttpStatus.BAD_REQUEST.value,
+        'response_body': json.dumps({
+            'error': 'Unknown HTTP verb received. The supported verbs are GET, POST.'
+        })
+    }
+
+    # Get the full request path by merging the base path and the request
+    full_path = pathlib.Path(os.path.normpath(pathlib.Path(str(path) + request['path'])))
+
+    # Make sure the use doesn't go out of the base path
+    if str(path) not in str(full_path):
+        response['response_status'] = HttpStatus.FORBIDDEN.value
+        response['response_body'] = json.dumps({
+            'error': 'The given path is not accessible.'
+        })
+        return response
+
+    # Read a given file or list the directory
+    if request['verb'] == HttpVerb.GET.value:
+        if full_path.is_dir():
+            return __list_directory(full_path)
+        else:
+            return __read_file(full_path)
+
+    # Write/Create a given file
+    if request['verb'] == HttpVerb.POST.value:
+        return __write_file(full_path)
+
+    return response
+
+
+def __list_directory(path):
+    return {
+        'content_type': 'application/json;charset=utf-8',
+        'content_disposition': 'inline',
+        'response_status': HttpStatus.OK.value,
+        'response_body': 'directory'
+    }
+
+
+def __read_file(path):
+    return {
+        'content_type': 'application/json;charset=utf-8',
+        'content_disposition': 'inline',
+        'response_status': HttpStatus.OK.value,
+        'response_body': 'file'
+    }
+
+
+def __write_file(path):
+    return {
+        'content_type': 'application/json;charset=utf-8',
+        'content_disposition': 'inline',
+        'response_status': HttpStatus.OK.value,
+        'response_body': 'file'
+    }
 
 
 #############################################################################################
@@ -199,8 +287,8 @@ def __parse_flags(path):
 
 # CLI Entry Point
 if __name__ == "__main__":
-    # Normalize the script parent directory + "\.." + "shared"
-    default_path = os.path.normpath(os.path.join(os.path.dirname(__file__), os.pardir, 'shared'))
+    # Get the root of the repository + "\shared"
+    default_path = pathlib.Path(__file__).parent.parent.joinpath('shared')
 
     flags = __parse_flags(default_path)
 
