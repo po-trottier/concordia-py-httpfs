@@ -1,0 +1,181 @@
+{
+	"info": {
+		"_postman_id": "b522f7fe-de56-4c44-960a-efc47f4f7759",
+		"name": "HTTP FS",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Errors",
+			"item": [
+				{
+					"name": "[GET] Outside Base Path",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:1773/../something.txt",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "1773",
+							"path": [
+								"..",
+								"something.txt"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "[GET] File Not Found",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:1773/non-existent.yml",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "1773",
+							"path": [
+								"non-existent.yml"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "[PUT] Invalid Verb",
+					"request": {
+						"method": "PUT",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:1773/test_dir/test_dir_file.txt",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "1773",
+							"path": [
+								"test_dir",
+								"test_dir_file.txt"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "[GET] Read File",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:1773/test_dir/test_dir_file.txt",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "1773",
+					"path": [
+						"test_dir",
+						"test_dir_file.txt"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "[GET] Read Image",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:1773/test_image.jpg",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "1773",
+					"path": [
+						"test_image.jpg"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "[GET] List Directory",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:1773/",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "1773",
+					"path": [
+						""
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "[POST] Write to file",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "file content is located here!!!"
+				},
+				"url": {
+					"raw": "http://localhost:1773/upload/upload_test_file.txt",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "1773",
+					"path": [
+						"upload",
+						"upload_test_file.txt"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "[POST] Upload a File",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "file",
+					"file": {
+						"src": "../shared/test_image.jpg"
+					}
+				},
+				"url": {
+					"raw": "http://localhost:1773/upload/test_image.jpg",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "1773",
+					"path": [
+						"upload",
+						"test_image.jpg"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}
