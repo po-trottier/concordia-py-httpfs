@@ -4,6 +4,7 @@
 #   - Nimit Jaggi (40032159)
 #############################################################################################
 
+
 import argparse
 import datetime
 import json
@@ -141,24 +142,22 @@ def __service_connection(key, mask, path, verbose):
 # Handler for client connections
 def __receive_connection(sock, path):
     # Receive the byte array
-    data = __receive_data(sock)
-
+    headers, body = __receive_data(sock)
     # Build a proper HTTP response from the request
-    response = __build_response(data, path)
-
+    response = __build_response(headers, body, path)
     # Return the response back to the client
-    return response.encode(encoding='UTF-8')
+    return response
 
 
 # Receive the byte array from the client connection
 def __receive_data(sock):
     # Read the socket data byte by byte until we reach the end of the headers
-    data = b''
-    while b'\r\n\r\n' not in data:
-        data += sock.recv(__BUFFER_SIZE)
+    headers = b''
+    while b'\r\n\r\n' not in headers:
+        headers += sock.recv(__BUFFER_SIZE)
 
     # Get a string from the header bytes without the empty lines
-    header_data = data[:-4].decode()
+    header_data = headers[:-4].decode()
 
     # Ignore the HTTP Version and Request Status
     header_strings = header_data.splitlines()[1:]
@@ -175,26 +174,32 @@ def __receive_data(sock):
         content_length = int(header_dictionary.get('Content-Length'))
 
     # Receive the rest of the request
+    body = b''
     if content_length:
-        data += sock.recv(content_length)
+        body += sock.recv(content_length)
 
-    return data
+    return headers, body
 
 
 # Build a proper HTTP response
-def __build_response(data, path):
+def __build_response(headers, body, path):
     # Get a request dictionary from the raw request
-    request = __parse_request(data.decode())
+    request = __parse_request(headers.decode())
     # Handle the request appropriately
-    response = __handle_request(request, path)
+    response = __handle_request(request, body, path)
 
     dt = datetime.datetime.utcnow()
 
-    content = f'HTTP/1.1 {response["response_status"][0]} {response["response_status"][1]}\r\n' \
+    # Build the text-based part of the request
+    content_string = f'HTTP/1.1 {response["response_status"][0]} {response["response_status"][1]}\r\n' \
               f'Content-Type: {response["content_type"]}\r\n' \
               f'Content-Disposition: {response["content_disposition"]}\r\n' \
               f'Content-Length: {len(response["response_body"])}\r\n' \
               f'Date: {format_date_time(dt.timestamp())}\r\n\r\n'
+
+    # Convert to a byte array
+    content = bytearray(content_string.encode())
+    # Add the binary part of the request
     content += response["response_body"]
 
     return content
@@ -202,23 +207,17 @@ def __build_response(data, path):
 
 def __parse_request(request):
     lines = request.splitlines()
+
     # Use REGEX to parse the request pattern
     match = re.search('^([A-Z]+) (.+) HTTP/\d\.?\d?$', lines[0])
-    # Find the beginning of the body
-    body_start = lines.index('') + 1
-    # If the body exists get it
-    body = None
-    if body_start < len(lines):
-        body = '\r\n'.join(lines[body_start:])
 
     return {
         'verb': match.group(1),
-        'path': match.group(2),
-        'body': body,
+        'path': match.group(2)
     }
 
 
-def __handle_request(request, path):
+def __handle_request(request, body, path):
     # Default Values
     response = {
         'content_type': 'application/json;charset=utf-8',
@@ -226,7 +225,7 @@ def __handle_request(request, path):
         'response_status': HttpStatus.BAD_REQUEST.value,
         'response_body': json.dumps({
             'error': 'Unknown HTTP verb received. The supported verbs are GET, POST.'
-        })
+        }).encode()
     }
 
     # Get the full request path by merging the base path and the request
@@ -236,8 +235,8 @@ def __handle_request(request, path):
     if str(path) not in str(full_path):
         response['response_status'] = HttpStatus.FORBIDDEN.value
         response['response_body'] = json.dumps({
-            'error': 'The given path is not accessible.'
-        })
+            'error': 'The requested path is not accessible.'
+        }).encode()
         return response
 
     # Read a given file or list the directory
@@ -250,11 +249,11 @@ def __handle_request(request, path):
     # Write/Create a given file
     if request['verb'] == HttpVerb.POST.value:
         if not full_path.is_dir():
-            return __write_file(full_path, request['body'])
+            return __write_file(full_path, body)
         else:
             response['response_body'] = json.dumps({
-                'error': 'The given path represents a directory. The path must represent a file to work correctly.'
-            })
+                'error': 'The requested path represents a directory. The path must represent a file to work correctly.'
+            }).encode()
             return response
 
     return response
@@ -274,7 +273,7 @@ def __list_directory(path):
             # Add an object with the name and type of the child
             children.append({'name': child.name, 'is_directory': child.is_dir()})
         # Add these values to the response
-        response['response_body'] = json.dumps(children)
+        response['response_body'] = json.dumps(children).encode()
         response['response_status'] = HttpStatus.OK.value
 
     # If an exception occurs set the response status as Internal Server Error
@@ -283,7 +282,7 @@ def __list_directory(path):
         response['response_body'] = json.dumps({
             'error': 'An unknown error occurred while listing the directory contents.',
             'details': str(e)
-        })
+        }).encode()
 
     return response
 
@@ -295,30 +294,35 @@ def __read_file(path):
         'content_disposition': 'inline'
     }
 
+    # If the path doesn't exist we're trying to read a file that doesn't exist
     if not path.exists():
         response['response_status'] = HttpStatus.NOT_FOUND.value
         response['response_body'] = json.dumps({
             'error': 'The requested file was not found.'
-        })
+        }).encode()
         return response
 
     try:
+        # Guess the Mime Type from the file extension
         mime_type = mimetypes.guess_type(path)[0]
 
+        # Read the file
         with open(path, 'rb') as file:
             file_content = file.read()
-            response['response_body'] = file_content.decode()
+            # Get the content disposition based on the Mime Type
             response['content_disposition'] = __get_content_disposition(mime_type, path)
+            response['response_body'] = file_content
             response['content_type'] = mime_type
             response['response_status'] = HttpStatus.OK.value
 
+    # If an error occurs return an Internal Server Error
     except IOError as e:
         response['content_disposition'] = 'inline'
         response['response_status'] = HttpStatus.INTERNAL_SERVER_ERROR.value
         response['response_body'] = json.dumps({
             'error': 'An unknown error occurred while reading the file contents.',
             'details': str(e)
-        })
+        }).encode()
         return response
 
     return response
@@ -336,29 +340,33 @@ def __write_file(path, content):
         created = not path.exists()
         # Create all the parent directories required
         path.parent.mkdir(parents=True, exist_ok=True)
+
         # Start writing the file
         with open(path, 'wb') as file:
-            file.write(content.encode())
+            file.write(content)
             response['response_status'] = HttpStatus.CREATED.value if created else HttpStatus.OK.value
             response['response_body'] = json.dumps({
                 'success': f'The file was {"created" if created else "overwritten"}.'
-            })
+            }).encode()
 
+    # If an error occurs return an Internal Server Error
     except IOError as e:
         response['content_disposition'] = 'inline'
         response['response_status'] = HttpStatus.INTERNAL_SERVER_ERROR.value
         response['response_body'] = json.dumps({
             'error': 'An unknown error occurred while writing the file contents.',
             'details': str(e)
-        })
+        }).encode()
         return response
 
     return response
 
 
 def __get_content_disposition(mime, path):
+    # Only return a given subset of Mime Types inline
     if mime in __INLINE_MIME_TYPES:
         return 'inline'
+    # Return the rest as attachments
     else:
         return f'attachment; filename="{path.name}"'
 
