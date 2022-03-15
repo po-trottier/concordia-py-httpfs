@@ -140,12 +140,14 @@ def __service_connection(key, mask, path, verbose):
 
 
 # Handler for client connections
-def __receive_connection(sock, path):
+def __receive_connection(sock, path, verbose):
     # Receive the byte array
     headers, body = __receive_data(sock)
     # Build a proper HTTP response from the request
     response = __build_response(headers, body, path)
     # Return the response back to the client
+    if verbose:
+        print("[CONNECTION] Connection received")
     return response
 
 
@@ -182,7 +184,7 @@ def __receive_data(sock):
 
 
 # Build a proper HTTP response
-def __build_response(headers, body, path):
+def __build_response(headers, body, path, verbose):
     # Get a request dictionary from the raw request
     request = __parse_request(headers.decode())
     # Handle the request appropriately
@@ -201,15 +203,19 @@ def __build_response(headers, body, path):
     content = bytearray(content_string.encode())
     # Add the binary part of the request
     content += response["response_body"]
+    if verbose:
+        print("[RESPONSE] Response created")
 
     return content
 
 
-def __parse_request(request):
+def __parse_request(request, verbose):
     lines = request.splitlines()
 
     # Use REGEX to parse the request pattern
     match = re.search('^([A-Z]+) (.+) HTTP/\d\.?\d?$', lines[0])
+    if verbose:
+        print("[REQUEST] Request parsed ")
 
     return {
         'verb': match.group(1),
@@ -287,7 +293,7 @@ def __list_directory(path):
     return response
 
 
-def __read_file(path):
+def __read_file(path, verbose):
     # Common response values
     response = {
         'content_type': 'application/json;charset=utf-8',
@@ -325,10 +331,13 @@ def __read_file(path):
         }).encode()
         return response
 
+    if verbose:
+        print("[RESPONSE] Response has been created")
+
     return response
 
 
-def __write_file(path, content):
+def __write_file(path, content, verbose):
     # Common response values
     response = {
         'content_type': 'application/json;charset=utf-8',
@@ -349,6 +358,7 @@ def __write_file(path, content):
                 'success': f'The file was {"created" if created else "overwritten"}.'
             }).encode()
 
+
     # If an error occurs return an Internal Server Error
     except IOError as e:
         response['content_disposition'] = 'inline'
@@ -358,6 +368,8 @@ def __write_file(path, content):
             'details': str(e)
         }).encode()
         return response
+    if verbose:
+        print("[")
 
     return response
 
