@@ -72,7 +72,7 @@ def start_server(host, port, path, verbose = False):
 
         if verbose:
             # noinspection HttpUrlsUsage
-            print(f'[INIT] HTTP File System server is listening at http://{host}:{port}')
+            print(f'[INIT] HTTP File System server is listening at http://{host}:{port}\n')
 
         # Listen to connections
         while True:
