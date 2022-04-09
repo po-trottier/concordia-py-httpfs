@@ -14,6 +14,7 @@ import pathlib
 import re
 import selectors
 import socket
+import sys
 import types
 from enum import Enum
 from wsgiref.handlers import format_date_time
@@ -43,9 +44,7 @@ class HttpVerb(Enum):
 # Default server host
 __SERVER_HOST = 'localhost'
 # Socket buffer size
-__BUFFER_SIZE = 1
-# Number of non-accepted connections queued
-__CONNECTION_QUEUE = 5
+__BUFFER_SIZE = 1024
 # Mime types to return inline
 __INLINE_MIME_TYPES = [
     'text/css',
@@ -66,100 +65,55 @@ selector = selectors.DefaultSelector()
 # Initialize the server on the sockets
 def start_server(host, port, path, verbose = False):
     # Open the socket
-    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     try:
         # Start the server
         listener.bind((host, port))
-        listener.listen(__CONNECTION_QUEUE)
 
         if verbose:
             # noinspection HttpUrlsUsage
             print(f'[INIT] HTTP File System server is listening at http://{host}:{port}')
 
-        # Setup multi-connection
-        listener.setblocking(False)
-        selector.register(listener, selectors.EVENT_READ, data=None)
-
         # Listen to connections
         while True:
-            events = selector.select(timeout=None)
-            for key, mask in events:
-                if key.data is None:
-                    # noinspection PyTypeChecker
-                    __accept_connection(key.fileobj, verbose)
-                else:
-                    __service_connection(key, mask, path, verbose)
+            response, connection = __receive_connection(listener, path, verbose)
+
+            listener.sendto(response, connection)
+
+            if verbose:
+                # noinspection HttpUrlsUsage
+                print(f'[CLIENT] Response sent to {connection}')
 
     finally:
         # Always close the socket
         listener.close()
-        selector.close()
-
-
-# Accept a client connection through the selector
-def __accept_connection(listener, verbose):
-    (conn, address) = listener.accept()
-
-    if verbose:
-        print("[CONNECTION] Accepted connection from", address)
-
-    # Setup Service Connection
-    conn.setblocking(False)
-    data = types.SimpleNamespace(addr=address, inb=b"", outb=b"")
-    events = selectors.EVENT_READ | selectors.EVENT_WRITE
-    selector.register(conn, events, data=data)
-
-
-# Accept a service connection (Read or Write data)
-def __service_connection(key, mask, path, verbose):
-    sock = key.fileobj
-    data = key.data
-
-    # Read the request from the client
-    if mask & selectors.EVENT_READ:
-        # Get the response data from the request
-        recv_data = __receive_connection(sock, path)
-        if recv_data:
-            data.outb += recv_data
-
-    # Send the response to the client
-    if mask & selectors.EVENT_WRITE:
-        if data.outb:
-            sent = sock.send(data.outb)
-            data.outb = data.outb[sent:]
-            if verbose and not data.outb:
-                print('[RESPONSE] Response sent to client')
-
-    # Close the connection if there is no more data to read or send back
-    if mask & selectors.EVENT_READ and not data.outb:
-        selector.unregister(sock)
-        sock.close()
-        if verbose:
-            print("[CONNECTION] Closed connection to", data.addr)
-
 
 # Handler for client connections
 def __receive_connection(sock, path, verbose):
     # Receive the byte array
-    headers, body = __receive_data(sock)
+    headers, body, connection = __receive_data(sock, verbose)
     # Build a proper HTTP response from the request
-    response = __build_response(headers, body, path)
+    response = __build_response(headers, body, path, verbose)
     # Return the response back to the client
     if verbose:
         print("[CONNECTION] Connection received")
-    return response
+    return response, connection
 
 
 # Receive the byte array from the client connection
-def __receive_data(sock):
+def __receive_data(sock, verbose):
     # Read the socket data byte by byte until we reach the end of the headers
-    headers = b''
-    while b'\r\n\r\n' not in headers:
-        headers += sock.recv(__BUFFER_SIZE)
+    data, address = sock.recvfrom(__BUFFER_SIZE)
+
+    headers_buffer = b''
+    for byte in data:
+        if b'\r\n\r\n' in headers_buffer:
+            break
+        headers_buffer += byte.to_bytes(1, sys.byteorder)
 
     # Get a string from the header bytes without the empty lines
-    header_data = headers[:-4].decode()
+    header_data = headers_buffer[:-4].decode()
 
     # Ignore the HTTP Version and Request Status
     header_strings = header_data.splitlines()[1:]
@@ -176,17 +130,21 @@ def __receive_data(sock):
         content_length = int(header_dictionary.get('Content-Length'))
 
     # Receive the rest of the request
-    body = b''
+    body_buffer = b''
     if content_length:
-        body += sock.recv(content_length)
+        body_buffer += sock.recvfrom(content_length)
 
-    return headers, body
+    if verbose:
+        # noinspection HttpUrlsUsage
+        print(f'[DATA] Data received from {address}')
+
+    return headers_buffer, body_buffer, address
 
 
 # Build a proper HTTP response
 def __build_response(headers, body, path, verbose):
     # Get a request dictionary from the raw request
-    request = __parse_request(headers.decode())
+    request = __parse_request(headers.decode(), verbose)
     # Handle the request appropriately
     response = __handle_request(request, body, path)
 
@@ -203,6 +161,7 @@ def __build_response(headers, body, path, verbose):
     content = bytearray(content_string.encode())
     # Add the binary part of the request
     content += response["response_body"]
+
     if verbose:
         print("[RESPONSE] Response created")
 
