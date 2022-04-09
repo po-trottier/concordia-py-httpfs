@@ -15,7 +15,6 @@ import re
 import selectors
 import socket
 import sys
-import types
 from enum import Enum
 from wsgiref.handlers import format_date_time
 
@@ -83,7 +82,7 @@ def start_server(host, port, path, verbose = False):
 
             if verbose:
                 # noinspection HttpUrlsUsage
-                print(f'[CLIENT] Response sent to {connection}')
+                print(f'[CLIENT] Response sent to {connection}\n')
 
     finally:
         # Always close the socket
@@ -106,11 +105,18 @@ def __receive_data(sock, verbose):
     # Read the socket data byte by byte until we reach the end of the headers
     data, address = sock.recvfrom(__BUFFER_SIZE)
 
+    body_index = 0
     headers_buffer = b''
     for byte in data:
         if b'\r\n\r\n' in headers_buffer:
             break
         headers_buffer += byte.to_bytes(1, sys.byteorder)
+        body_index += 1
+
+    # Get the request body
+    body_buffer = b''
+    if len(data) > body_index:
+        body_buffer = data[body_index:]
 
     # Get a string from the header bytes without the empty lines
     header_data = headers_buffer[:-4].decode()
@@ -123,16 +129,6 @@ def __receive_data(sock, verbose):
     for string in header_strings:
         header = string.split(': ')
         header_dictionary[header[0]] = header[1]
-
-    # Create a dictionary from the headers
-    content_length = None
-    if 'Content-Length' in header_dictionary:
-        content_length = int(header_dictionary.get('Content-Length'))
-
-    # Receive the rest of the request
-    body_buffer = b''
-    if content_length:
-        body_buffer += sock.recvfrom(content_length)
 
     if verbose:
         # noinspection HttpUrlsUsage
